@@ -1,0 +1,72 @@
+const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6),today=()=>new Date().toISOString().slice(0,10);
+const COLL={patient:'patients',form:'forms',sub:'subs',log:'log'},TYPES=['text','textarea','number','date','select','multi','heading'];
+let D=JSON.parse(localStorage.getItem('brp')||'null')||{patients:[],forms:DEFAULT_FORMS,subs:[],log:[],dirty:{},last:0,cfg:{url:'',key:'',pin:'1234',user:''}};
+let view='dash',arg={},unlocked=false,BF=null;
+const save=()=>localStorage.setItem('brp',JSON.stringify(D));
+function touch(kind,r){r.updated=Date.now();D.dirty[kind+':'+r.id]=1;save()}
+function log(text){touch('log',(D.log.push({id:uid(),at:new Date().toISOString(),by:D.cfg.user||'—',text}),D.log.at(-1)))}
+const toast=m=>{$('#toast').textContent=m;setTimeout(()=>$('#toast').textContent='',3000)};
+const active=()=>D.patients.filter(p=>p.status!='removed'),forms=()=>D.forms.filter(f=>!f.deleted),P=id=>D.patients.find(p=>p.id==id)||{name:'?'};
+const lastVisit=id=>D.subs.filter(s=>s.pid==id).map(s=>s.date).sort().at(-1);
+const days=d=>d?Math.floor((Date.now()-new Date(d))/864e5):null;
+const NAV=[['dash','Dashboard'],['patients','Patients'],['fill','New visit form'],['log','Activity log'],['build','🔒 Form builder'],['set','Settings']];
+function go(v,a={}){if(v=='build'&&!unlocked){const p=prompt('Admin PIN');if(p===null)return;if(p!==D.cfg.pin)return toast('Wrong PIN');unlocked=true}if(v!='build')BF=null;view=v;arg=a;render()}
+function render(){$('#nav').innerHTML=NAV.map(([k,t])=>`<button class="${k==view?'on':''}" onclick="go('${k}')">${t}</button>`).join('');
+$('#title').textContent=(NAV.find(n=>n[0]==view)||[])[1]||'';net();$('#v').innerHTML=V[view]()}
+function net(){const n=Object.keys(D.dirty).length;$('#net').innerHTML=`<span class="${navigator.onLine?'on-l':'off-l'}">● ${navigator.onLine?'Online':'Offline'}</span> · ${n} unsynced`}
+addEventListener('online',()=>{net();sync()});addEventListener('offline',net);
+const modal=h=>$('#modal').innerHTML=h?`<div class="card">${h}</div>`:'';
+const V={};
+V.dash=()=>{const a=active(),m=today().slice(0,7),mv=D.subs.filter(s=>s.date.startsWith(m));
+return `<div class="stats"><div class="stat"><b>${a.length}</b>Active patients</div><div class="stat"><b>${mv.length}</b>Visits this month</div><div class="stat"><b>${a.filter(p=>!(days(lastVisit(p.id))<=7)).length}</b>No visit in 7 days</div><div class="stat"><b>${D.patients.length-a.length}</b>Removed</div></div>
+<div class="cols"><div class="card"><h3>Patient overview</h3><table><tr><th>Patient</th><th>Island/Address</th><th>Last visit</th></tr>${a.map(p=>{const d=days(lastVisit(p.id));return `<tr onclick="go('pt',{id:'${p.id}'})"><td><b>${esc(p.name)}</b><div class="mu">${esc(p.reg)} · ${esc(p.age)}/${esc(p.sex)}</div></td><td>${esc(p.address)}</td><td>${d==null?'<span class="badge w">Never</span>':`<span class="badge ${d>7?'w':''}">${d}d ago</span>`}</td></tr>`}).join('')||'<tr><td>No patients yet</td></tr>'}</table></div>
+<div><div class="card"><h3>Forms</h3>${forms().map(f=>`<div class="row"><b>${esc(f.name)}<div class="mu">${mv.filter(s=>s.fid==f.id).length} this month</div></b><button class="pri" onclick="go('fill',{fid:'${f.id}'})">Fill</button></div>`).join('')}</div>
+<div class="card"><h3>Recent submissions</h3>${D.subs.slice(-6).reverse().map(s=>`<div class="row"><span>${esc(P(s.pid).name)}<div class="mu">${esc(s.fname)} · ${s.date}</div></span></div>`).join('')||'<span class="mu">None yet</span>'}</div></div></div>`};
+V.patients=()=>`<div class="row"><input id="q" placeholder="Search…" oninput="filt()" style="flex:1"><button class="pri" onclick="ptModal()">+ Register patient</button></div><div class="card"><table id="pt">${ptRows('')}</table></div>
+<div class="card"><h3>Removed from register</h3><table>${D.patients.filter(p=>p.status=='removed').map(p=>`<tr><td>${esc(p.name)}</td><td>${esc(p.reason)}${p.note?': '+esc(p.note):''}</td><td>${p.removedOn}</td></tr>`).join('')||'<tr><td class="mu">None</td></tr>'}</table></div>`;
+const ptRows=q=>active().filter(p=>(p.name+p.reg).toLowerCase().includes(q.toLowerCase())).map(p=>`<tr onclick="go('pt',{id:'${p.id}'})"><td><b>${esc(p.name)}</b></td><td>${esc(p.reg)}</td><td>${esc(p.age)}/${esc(p.sex)}</td><td>${esc(p.address)}</td></tr>`).join('');
+const filt=()=>$('#pt').innerHTML=ptRows($('#q').value);
+function ptModal(id){const p=D.patients.find(x=>x.id==id)||{};const i=(k,l,t='text')=>`<label>${l}<input type="${t}" id="p_${k}" value="${esc(p[k])}"></label>`;
+modal(`<h3>${id?'Edit':'Register'} patient</h3><div class="g">${i('name','Full name')}${i('reg','Registry No.')}${i('age','Age','number')}<label>Sex<select id="p_sex"><option>${p.sex||'M'}</option><option>M</option><option>F</option></select></label>${i('nid','NID No.')}${i('phone','Contact')}${i('address','Address')}${i('dx','Diagnosis / condition')}</div><div class="row"><button class="pri" onclick="savePt('${id||''}')">Save</button><button onclick="modal()">Cancel</button></div>`)}
+function savePt(id){const g=k=>$('#p_'+k).value.trim(),p=id?P(id):{id:uid(),status:'active',since:today()};if(!g('name'))return toast('Name required');
+['name','reg','age','sex','nid','phone','address','dx'].forEach(k=>p[k]=g(k));if(!id)D.patients.push(p);touch('patient',p);log((id?'Edited':'Registered')+' patient '+p.name);modal();go(id?'pt':'patients',{id:p.id})}
+V.pt=()=>{const p=P(arg.id),s=D.subs.filter(x=>x.pid==p.id).reverse();return `<div class="card"><div class="row"><h3 style="flex:1;margin:0">${esc(p.name)}</h3><button onclick="ptModal('${p.id}')">Edit</button><button class="red" onclick="rmModal('${p.id}')">Remove from register</button></div>
+<p class="mu">Reg ${esc(p.reg)} · ${esc(p.age)}/${esc(p.sex)} · NID ${esc(p.nid)} · ${esc(p.address)} · ${esc(p.phone)}<br>${esc(p.dx)}</p>${forms().map(f=>`<button class="pri" onclick="go('fill',{pid:'${p.id}',fid:'${f.id}'})">+ ${esc(f.name)}</button> `).join('')}</div>
+<div class="card"><h3>Visit history</h3><table>${s.map(x=>`<tr><td>${x.date}</td><td>${esc(x.fname)}</td><td>${esc(x.by)}</td><td><button onclick="printSub('${x.id}')">Print / PDF</button></td></tr>`).join('')||'<tr><td class="mu">No visits</td></tr>'}</table></div>`};
+function rmModal(id){modal(`<h3>Remove ${esc(P(id).name)}</h3><p>Reason for removal (required):</p><select id="rr" style="width:100%"><option value="">Select…</option><option>Deceased</option><option>No longer applicable as a bed-ridden patient</option><option>Moved / transferred</option><option>Other</option></select><textarea id="rn" placeholder="Note (optional)"></textarea><div class="row"><button class="red" onclick="doRm('${id}')">Remove</button><button onclick="modal()">Cancel</button></div>`)}
+function doRm(id){const r=$('#rr').value;if(!r)return toast('Select a reason');const p=P(id);Object.assign(p,{status:'removed',reason:r,note:$('#rn').value,removedOn:today()});touch('patient',p);log(`Removed patient ${p.name} — ${r}`);modal();go('patients')}
+const chip=(t,n,v,x)=>`<label class="chip"><input type="${t}" name="${n}" value="${esc(v)}" ${x?'checked':''}><span>${esc(v)}</span></label>`;
+V.fill=()=>{const fl=forms(),f=fl.find(x=>x.id==arg.fid);
+const head=`<div class="card g"><label>Patient<select id="sp">${active().map(p=>`<option value="${p.id}" ${p.id==arg.pid?'selected':''}>${esc(p.name)} (${esc(p.reg)})</option>`).join('')}</select></label><label>Form<select onchange="arg.fid=this.value;arg.pid=$('#sp').value;render()"><option value="">Select form…</option>${fl.map(x=>`<option value="${x.id}" ${x==f?'selected':''}>${esc(x.name)}</option>`).join('')}</select></label></div>`;
+if(!f)return head;
+return head+`<div class="card"><div class="g"><label>Date<input type="date" id="vd" value="${today()}"></label><label>Visited by<input id="vb" value="${esc(D.cfg.user)}"></label></div>`+f.fields.map(x=>{const n='q_'+x.id;
+if(x.type=='heading')return `<h4>${esc(x.label)}</h4>`;let inp;
+if(x.type=='select')inp=x.options.map(o=>chip('radio',n,o)).join('');else if(x.type=='multi')inp=x.options.map(o=>chip('checkbox',n,o)).join('');
+else if(x.type=='textarea')inp=`<textarea name="${n}"></textarea>`;else inp=`<input name="${n}" type="${x.type}" style="width:100%">`;
+return `<div class="q"><div>${esc(x.label)}</div>${inp}${x.remark?`<input placeholder="Remarks" name="${n}_r" style="width:100%;margin-top:4px">`:''}</div>`}).join('')+`<button class="pri" onclick="saveSub()">Save visit</button></div>`};
+function saveSub(){const f=forms().find(x=>x.id==arg.fid),pid=$('#sp').value;if(!pid)return toast('Choose a patient');
+const rows=f.fields.map(x=>{const n='q_'+x.id,els=[...document.getElementsByName(n)];let v=x.type=='multi'?els.filter(e=>e.checked).map(e=>e.value).join(', '):x.type=='select'?(els.find(e=>e.checked)||{}).value:(els[0]||{}).value;
+return {l:x.label,t:x.type,v:v||'',r:x.remark?(document.getElementsByName(n+'_r')[0].value):''}});
+const s={id:uid(),pid,fid:f.id,fname:f.name,date:$('#vd').value,by:$('#vb').value,rows};D.subs.push(s);touch('sub',s);log(`Saved "${f.name}" for ${P(pid).name}`);toast('Saved'+(navigator.onLine?'':' offline — will sync later'));go('pt',{id:pid});sync(1)}
+function printSub(id){const s=D.subs.find(x=>x.id==id),p=P(s.pid);const sg=['HW','Nurse','Doctor'].map(r=>`<div>Name of the ${r}<br>Date:<br>Signature</div>`).join('');
+$('#pa').innerHTML=`<h2>Sh: Atoll Hospital — Sh: Funadhoo</h2><h2>${esc(s.fname)}</h2><p>Name: <b>${esc(p.name)}</b> · Registry No: ${esc(p.reg)} · Age/Sex: ${esc(p.age)}/${esc(p.sex)} · NID: ${esc(p.nid)}</p><p>Address: ${esc(p.address)} · Date: ${s.date} · By: ${esc(s.by)}</p><table>${s.rows.map(r=>r.t=='heading'?`<tr><th colspan="3" align="left">${esc(r.l)}</th></tr>`:`<tr><td width="35%">${esc(r.l)}</td><td>${esc(r.v)}</td>${r.r?`<td>${esc(r.r)}</td>`:''}</tr>`).join('')}</table><div class="sg">${sg}</div>`;
+document.title=`${p.name} - ${s.fname} - ${s.date}`;print();document.title='Bed-ridden Patient Visits'}
+V.log=()=>`<div class="card"><table>${[...D.log].reverse().slice(0,300).map(l=>`<tr><td class="mu">${new Date(l.at).toLocaleString()}</td><td>${esc(l.by)}</td><td>${esc(l.text)}</td></tr>`).join('')||'<tr><td>No activity</td></tr>'}</table></div>`;
+const nf=()=>({id:'f'+uid(),label:'New field',type:'text',options:[],remark:false});
+V.build=()=>{if(!BF)return `<div class="card">${forms().map(f=>`<div class="row"><b>${esc(f.name)} <span class="mu">${f.fields.length} fields</span></b><button onclick="BF=JSON.parse(JSON.stringify(D.forms.find(x=>x.id=='${f.id}')));render()">Edit</button><button class="red" onclick="delForm('${f.id}')">Delete</button></div>`).join('')}<button class="pri" onclick="BF={id:uid(),name:'New form',fields:[nf()]};render()">+ New form</button></div>`;
+return `<div class="card"><input value="${esc(BF.name)}" oninput="BF.name=this.value" style="width:100%;font-weight:700">`+BF.fields.map((x,i)=>`<div class="fld"><input value="${esc(x.label)}" onchange="sf(${i},'label',this.value)"><select onchange="sf(${i},'type',this.value,1)">${TYPES.map(t=>`<option ${t==x.type?'selected':''}>${t}</option>`).join('')}</select>${x.type=='select'||x.type=='multi'?`<input value="${esc(x.options.join(', '))}" placeholder="Options, comma separated" onchange="sf(${i},'options',this.value.split(',').map(s=>s.trim()).filter(Boolean))">`:''}<label><input type="checkbox" ${x.remark?'checked':''} onchange="sf(${i},'remark',this.checked)"> remarks column</label><button onclick="mv(${i},-1)">▲</button><button onclick="mv(${i},1)">▼</button><button class="red" onclick="BF.fields.splice(${i},1);render()">✕</button></div>`).join('')+`<button onclick="BF.fields.push(nf());render()">+ Add column / field</button> <button class="pri" onclick="saveForm()">Save form</button> <button onclick="BF=null;render()">Cancel</button></div>`};
+const sf=(i,k,v,r)=>{BF.fields[i][k]=v;if(r)render()},mv=(i,d)=>{const a=BF.fields,j=i+d;if(j<0||j>=a.length)return;[a[i],a[j]]=[a[j],a[i]];render()};
+function saveForm(){const k=D.forms.findIndex(x=>x.id==BF.id);k<0?D.forms.push(BF):D.forms[k]=BF;touch('form',BF);log(`Updated form "${BF.name}" (${BF.fields.length} fields)`);BF=null;toast('Form saved');render()}
+function delForm(id){const f=D.forms.find(x=>x.id==id);if(!confirm('Delete form "'+f.name+'"? Past visits are kept.'))return;f.deleted=true;touch('form',f);log(`Deleted form "${f.name}"`);render()}
+V.set=()=>{const c=D.cfg;return `<div class="card g"><label>Your name (used in log)<input id="c_user" value="${esc(c.user)}"></label><label>Admin PIN<input id="c_pin" value="${esc(c.pin)}"></label><label>Supabase URL<input id="c_url" value="${esc(c.url)}" placeholder="https://xxxx.supabase.co"></label><label>Supabase anon key<input id="c_key" value="${esc(c.key)}"></label></div><button class="pri" onclick="saveCfg()">Save settings</button> <button onclick="sync()">Sync now</button>`};
+function saveCfg(){['user','pin','url','key'].forEach(k=>D.cfg[k]=$('#c_'+k).value.trim().replace(/\/$/,''));save();log('Settings changed');toast('Saved')}
+async function sync(quiet){const c=D.cfg;if(!c.url||!c.key)return quiet||toast('Add Supabase URL & key in Settings');if(!navigator.onLine)return quiet||toast('Offline — will sync automatically when back online');
+const H={apikey:c.key,Authorization:'Bearer '+c.key,'Content-Type':'application/json'};$('#syncb').textContent='Syncing…';
+try{const keys=Object.keys(D.dirty);if(keys.length){const rows=keys.map(k=>{const[kind,id]=[k.split(':')[0],k.split(':')[1]],r=D[COLL[kind]].find(x=>x.id==id);return {id:k,kind,data:r,updated_at:r.updated}});
+const r=await fetch(c.url+'/rest/v1/records?on_conflict=id',{method:'POST',headers:{...H,Prefer:'resolution=merge-duplicates'},body:JSON.stringify(rows)});if(!r.ok)throw await r.text();D.dirty={}}
+const r=await fetch(`${c.url}/rest/v1/records?updated_at=gt.${D.last}&select=*`,{headers:H});if(!r.ok)throw await r.text();
+for(const x of await r.json()){const a=D[COLL[x.kind]],i=a.findIndex(y=>y.id==x.data.id);if(i<0)a.push(x.data);else if(x.updated_at>(a[i].updated||0))a[i]=x.data;D.last=Math.max(D.last,x.updated_at)}
+save();toast('Synced ✓')}catch(e){toast('Sync failed: '+String(e).slice(0,80))}$('#syncb').textContent='⟳ Sync';render()}
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+render();sync(1);
