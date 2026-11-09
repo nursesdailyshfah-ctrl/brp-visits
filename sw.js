@@ -1,4 +1,4 @@
-const C='brp-v1',F=['./index.html','../css/style.css','../js/defaults.js','../js/app.js'];
+const C='brp-v2',F=['./index.html','./style.css','./defaults.js','./app.js'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(C).then(c=>c.addAll(F)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
 self.addEventListener('fetch',e=>{if(e.request.method!=='GET'||e.request.url.includes('/rest/v1/'))return;
